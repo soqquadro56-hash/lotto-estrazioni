@@ -1,4 +1,4 @@
-name: Aggiorna estrazioni Lotto (ADM)
+name: Aggiorna estrazioni Lotto (dati.gov.it)
 
 on:
   schedule:
@@ -13,59 +13,65 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Scarica pagina ADM
+      - name: Scarica dataset ufficiale Lotto
         run: |
-          curl -sS "https://www.adm.gov.it/portale/lotto" -o adm.html
+          curl -sS "https://www.dati.gov.it/api/3/action/package_show?id=lotto" -o dataset.json
 
-      - name: Estrai numeri e genera latest.json
+      - name: Estrai URL ultimo file
         run: |
           python3 << 'EOF'
-          import re, json
+          import json, re, urllib.request
 
-          html = open("adm.html").read()
+          data = json.load(open("dataset.json"))
+          resources = data["result"]["resources"]
 
-          # Estrazione data concorso
-          data = re.search(r"Estrazione del (\d{2}/\d{2}/\d{4})", html)
-          data = data.group(1) if data else "00/00/0000"
+          # Trova il file più recente in formato JSON
+          url = None
+          for r in resources:
+              if "json" in r["format"].lower():
+                  url = r["url"]
+                  break
 
-          # Estrazione numero concorso
-          concorso = re.search(r"Concorso n\. (\d+)", html)
-          concorso = concorso.group(1) if concorso else "0"
+          if not url:
+              raise Exception("Nessun file JSON trovato nel dataset")
 
-          # Estrazione ruote
-          ruote = {}
-          blocchi = re.findall(r'<div class="ruota">(.*?)</div>', html, re.S)
-
-          for blocco in blocchi:
-              nome = re.search(r'<h3>(.*?)</h3>', blocco)
-              nome = nome.group(1).strip().upper() if nome else None
-
-              numeri = re.findall(r'<span class="numero">(.*?)</span>', blocco)
-              numeri = [int(n) for n in numeri if n.isdigit()]
-
-              if nome and numeri:
-                  ruote[nome] = numeri[:5]
-
-          latest = {
-              "date": data,
-              "concorso": concorso,
-              "ruote": ruote
-          }
-
-          with open("latest.json", "w") as f:
-              json.dump(latest, f, indent=2)
+          print(url)
+          open("url.txt", "w").write(url)
           EOF
 
-      - name: Sposta latest.json in previous.json
+      - name: Scarica estrazioni ufficiali
         run: |
-          if [ -f previous.json ]; then
-            cp latest.json previous.json
-          fi
+          curl -sS "$(cat url.txt)" -o estrazioni.json
+
+      - name: Genera latest.json e previous.json
+        run: |
+          python3 << 'EOF'
+          import json
+
+          data = json.load(open("estrazioni.json"))
+
+          # Ordina per data
+          data_sorted = sorted(data, key=lambda x: x["data_estrazione"], reverse=True)
+
+          latest = data_sorted[0]
+          previous = data_sorted[1]
+
+          # Converte nel formato della tua app
+          def convert(e):
+              return {
+                  "date": e["data_estrazione"],
+                  "concorso": e["concorso"],
+                  "ruote": e["ruote"]
+              }
+
+          open("latest.json", "w").write(json.dumps(convert(latest), indent=2))
+          open("previous.json", "w").write(json.dumps(convert(previous), indent=2))
+          EOF
 
       - name: Commit & push
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add latest.json previous.json
-          git commit -m "Aggiornamento automatico estrazioni ADM" || echo "Nessun cambiamento"
+          git commit -m "Aggiornamento automatico estrazioni ufficiali" || echo "Nessun cambiamento"
           git push
