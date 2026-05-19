@@ -1,4 +1,4 @@
-name: Aggiorna estrazioni Lotto
+name: Aggiorna estrazioni Lotto (ADM)
 
 on:
   schedule:
@@ -13,25 +13,59 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Scarica ultima estrazione
+      - name: Scarica pagina ADM
         run: |
-          curl -sS "https://api.lottoced.com/latest" -o latest.json
+          curl -sS "https://www.adm.gov.it/portale/lotto" -o adm.html
 
-      - name: Scarica penultima estrazione
+      - name: Estrai numeri e genera latest.json
         run: |
-          curl -sS "https://api.lottoced.com/previous" -o previous.json
+          python3 << 'EOF'
+          import re, json
 
-      - name: Configura git
+          html = open("adm.html").read()
+
+          # Estrazione data concorso
+          data = re.search(r"Estrazione del (\d{2}/\d{2}/\d{4})", html)
+          data = data.group(1) if data else "00/00/0000"
+
+          # Estrazione numero concorso
+          concorso = re.search(r"Concorso n\. (\d+)", html)
+          concorso = concorso.group(1) if concorso else "0"
+
+          # Estrazione ruote
+          ruote = {}
+          blocchi = re.findall(r'<div class="ruota">(.*?)</div>', html, re.S)
+
+          for blocco in blocchi:
+              nome = re.search(r'<h3>(.*?)</h3>', blocco)
+              nome = nome.group(1).strip().upper() if nome else None
+
+              numeri = re.findall(r'<span class="numero">(.*?)</span>', blocco)
+              numeri = [int(n) for n in numeri if n.isdigit()]
+
+              if nome and numeri:
+                  ruote[nome] = numeri[:5]
+
+          latest = {
+              "date": data,
+              "concorso": concorso,
+              "ruote": ruote
+          }
+
+          with open("latest.json", "w") as f:
+              json.dump(latest, f, indent=2)
+          EOF
+
+      - name: Sposta latest.json in previous.json
+        run: |
+          if [ -f previous.json ]; then
+            cp latest.json previous.json
+          fi
+
+      - name: Commit & push
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-
-      - name: Commit & push se ci sono cambiamenti
-        run: |
-          if git status --porcelain | grep -q .; then
-            git add latest.json previous.json
-            git commit -m "Aggiornamento automatico estrazioni Lotto"
-            git push
-          else
-            echo "Nessun cambiamento nei file JSON."
-          fi
+          git add latest.json previous.json
+          git commit -m "Aggiornamento automatico estrazioni ADM" || echo "Nessun cambiamento"
+          git push
