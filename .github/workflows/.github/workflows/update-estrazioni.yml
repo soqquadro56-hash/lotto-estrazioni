@@ -1,0 +1,37 @@
+name: Aggiorna estrazioni Lotto
+
+on:
+  schedule:
+    - cron: "35 20 * * 2,4,6"  # 21:35 italiane (estrazioni)
+  workflow_dispatch:
+
+jobs:
+  update-estrazioni:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Scarica ultima estrazione
+        run: |
+          curl -sS "https://api.lottoced.com/latest" -o latest.json
+
+      - name: Scarica penultima estrazione
+        run: |
+          curl -sS "https://api.lottoced.com/previous" -o previous.json
+
+      - name: Configura git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Commit & push se ci sono cambiamenti
+        run: |
+          if git status --porcelain | grep -q .; then
+            git add latest.json previous.json
+            git commit -m "Aggiornamento automatico estrazioni Lotto"
+            git push
+          else
+            echo "Nessun cambiamento nei file JSON."
+          fi
